@@ -1,5 +1,5 @@
 import MockAdapter from 'axios-mock-adapter';
-import { configure, getConfig, getAxiosInstance } from '../src/client.js';
+import { configure, getConfig, getAxiosInstance, getCacheManager, getCacheStats, clearCache, request } from '../src/client.js';
 import { ConfigurationError, TimeoutError, APIError } from '../src/errors.js';
 
 describe('Client Module', () => {
@@ -201,6 +201,122 @@ describe('Client Module', () => {
 
       expect(retrieved.baseURL).toBe(config.baseURL);
       expect(retrieved.apiKey).toBe(config.apiKey);
+    });
+  });
+
+  describe('cache functionality', () => {
+    beforeEach(() => {
+      clearCache();
+    });
+
+    it('should not initialize cache manager when caching is disabled', () => {
+      configure({
+        baseURL: 'https://api.limitless.exchange/api-v1',
+        cache: { enabled: false, maxSize: 100, defaultTTL: 60000 }
+      });
+
+      expect(getCacheManager()).toBeNull();
+      expect(getCacheStats()).toBeNull();
+    });
+
+    it('should initialize cache manager when caching is enabled', () => {
+      configure({
+        baseURL: 'https://api.limitless.exchange/api-v1',
+        cache: { enabled: true, maxSize: 100, defaultTTL: 60000 }
+      });
+
+      expect(getCacheManager()).not.toBeNull();
+      expect(getCacheStats()).not.toBeNull();
+    });
+
+    it('should cache GET requests and return cached data on subsequent calls', async () => {
+      configure({
+        baseURL: 'https://api.limitless.exchange/api-v1',
+        cache: { enabled: true, maxSize: 100, defaultTTL: 60000 }
+      });
+
+      mock = new MockAdapter(getAxiosInstance());
+      const mockData = [{ id: 1, title: 'Test Market' }];
+      mock.onGet('/markets/active').reply(200, mockData);
+
+      // First request should hit the API
+      const result1 = await request('listMarkets');
+      expect(result1).toEqual(mockData);
+      expect(mock.history.get.length).toBe(1);
+
+      // Second request should return cached data
+      const result2 = await request('listMarkets');
+      expect(result2).toEqual(mockData);
+      expect(mock.history.get.length).toBe(1); // Still only 1 API call
+
+      // Verify cache stats
+      const stats = getCacheStats();
+      expect(stats?.hits).toBe(1);
+      expect(stats?.misses).toBe(1);
+      expect(stats?.hitRate).toBe(0.5);
+    });
+
+    it('should bypass cache when bypassCache option is true', async () => {
+      configure({
+        baseURL: 'https://api.limitless.exchange/api-v1',
+        cache: { enabled: true, maxSize: 100, defaultTTL: 60000 }
+      });
+
+      mock = new MockAdapter(getAxiosInstance());
+      const mockData = [{ id: 1, title: 'Test Market' }];
+      mock.onGet('/markets/active').reply(200, mockData);
+
+      // First request
+      await request('listMarkets');
+      expect(mock.history.get.length).toBe(1);
+
+      // Second request with bypassCache should hit API again
+      await request('listMarkets', { bypassCache: true });
+      expect(mock.history.get.length).toBe(2);
+    });
+
+    it('should not cache non-GET requests', async () => {
+      configure({
+        baseURL: 'https://api.limitless.exchange/api-v1',
+        cache: { enabled: true, maxSize: 100, defaultTTL: 60000 }
+      });
+
+      mock = new MockAdapter(getAxiosInstance());
+      const mockData = { betId: '123', status: 'pending' };
+      mock.onPost('/orders').reply(200, mockData);
+
+      // POST requests should not be cached
+      await request('submitBet', { method: 'POST', data: { marketId: '1', outcome: 'YES', amount: 100 } });
+      await request('submitBet', { method: 'POST', data: { marketId: '1', outcome: 'YES', amount: 100 } });
+
+      expect(mock.history.post.length).toBe(2); // Both requests hit the API
+
+      const stats = getCacheStats();
+      expect(stats?.hits).toBe(0);
+      expect(stats?.misses).toBe(0);
+    });
+
+    it('should clear cache when clearCache is called', async () => {
+      configure({
+        baseURL: 'https://api.limitless.exchange/api-v1',
+        cache: { enabled: true, maxSize: 100, defaultTTL: 60000 }
+      });
+
+      mock = new MockAdapter(getAxiosInstance());
+      const mockData = [{ id: 1, title: 'Test Market' }];
+      mock.onGet('/markets/active').reply(200, mockData);
+
+      // Cache a request
+      await request('listMarkets');
+      let stats = getCacheStats();
+      expect(stats?.size).toBe(1);
+
+      // Clear cache
+      clearCache();
+      stats = getCacheStats();
+      expect(stats?.size).toBe(0);
+      expect(stats?.hits).toBe(0);
+      expect(stats?.misses).toBe(0);
     });
   });
 });

@@ -1,5 +1,12 @@
 // Client module exports
-export { configure, getConfig } from './client.js';
+export { 
+  configure, 
+  getConfig, 
+  getCacheStats, 
+  getRateLimitStatus, 
+  clearCache, 
+  invalidateCache 
+} from './client.js';
 
 // Markets module exports
 export { listMarkets, getMarketDetails } from './markets.js';
